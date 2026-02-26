@@ -1,20 +1,18 @@
 import asyncio
-import os
 import aiohttp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from openai import AsyncOpenAI
-from dotenv import load_dotenv
 
-# Загружаем переменные окружения
-load_dotenv()
+# =======================
+# ВСТАВЬ СЮДА СВОИ КЛЮЧИ
+# =======================
+TELEGRAM_TOKEN = "8707608068:AAH2z1zsDcxhqz7CscUBZOd8HY3FX4VRrqQ"
+OPENAI_API_KEY = "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"
+BOT_NAME = "буся"  # имя, на которое реагирует бот
+# =======================
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-BOT_NAME = os.getenv("BOT_NAME", "буся").lower()
-
-# Инициализация
 bot = Bot(
     token=TELEGRAM_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -23,27 +21,29 @@ bot = Bot(
 dp = Dispatcher()
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-# ================================
-# GPT ОТВЕТ
-# ================================
+BOT_NAME = BOT_NAME.lower()
+
+
+# ========= GPT =========
 async def ask_gpt(user_text: str):
     response = await client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {
                 "role": "system",
-                "content": "Ты дружелюбная кошка по имени Буся. Отвечай мило, но информативно."
+                "content": "Ты милая кошка по имени Буся. Отвечай дружелюбно, но информативно."
             },
-            {"role": "user", "content": user_text}
+            {
+                "role": "user",
+                "content": user_text
+            }
         ],
         temperature=0.7,
     )
     return response.choices[0].message.content
 
 
-# ================================
-# ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ
-# ================================
+# ======== IMAGE ========
 async def generate_image(prompt: str):
     response = await client.images.generate(
         model="gpt-image-1",
@@ -53,9 +53,7 @@ async def generate_image(prompt: str):
     return response.data[0].url
 
 
-# ================================
-# ОБРАБОТКА СООБЩЕНИЙ
-# ================================
+# ======== HANDLER ========
 @dp.message(F.text)
 async def handle_message(message: types.Message):
 
@@ -68,18 +66,16 @@ async def handle_message(message: types.Message):
     if BOT_NAME not in text_lower:
         return
 
-    # Убираем имя из текста
     cleaned_text = text_lower.replace(BOT_NAME, "").strip()
 
-    # Если просят нарисовать
-    if any(word in text_lower for word in ["нарисуй", "картинка", "изобрази", "создай изображение"]):
+    # Проверка на генерацию картинки
+    if any(word in text_lower for word in ["нарисуй", "картинка", "изобрази", "создай"]):
 
-        await message.reply("Мяу... сейчас нарисую 🎨")
+        await message.reply("Мяу... рисую 🎨")
 
         try:
             image_url = await generate_image(cleaned_text)
 
-            # Скачиваем изображение
             async with aiohttp.ClientSession() as session:
                 async with session.get(image_url) as resp:
                     if resp.status == 200:
@@ -87,48 +83,21 @@ async def handle_message(message: types.Message):
                         await message.answer_photo(photo=photo)
 
         except Exception as e:
-            await message.reply(f"Мяу... ошибка при рисовании 😿\n{e}")
+            await message.reply(f"Ошибка при рисовании 😿\n{e}")
 
     else:
-        # Обычный ответ GPT
         try:
             answer = await ask_gpt(cleaned_text)
             await message.reply(answer)
         except Exception as e:
-            await message.reply(f"Мяу... я запуталась 😿\n{e}")
+            await message.reply(f"Ошибка 😿\n{e}")
 
 
-# ================================
-# ЗАПУСК
-# ================================
+# ======== START ========
 async def main():
-    print(f"🐾 Буся запущена и готова общаться!")
+    print("🐾 Буся запущена!")
     await dp.start_polling(bot)
 
-
-if __name__ == "__main__":
-    asyncio.run(main())    # Проверяем, упомянуто ли имя бота
-    if BOT_NAME in text:
-        # Если в тексте есть просьба нарисовать
-        if any(word in text for word in ["нарисуй", "картинка", "изобрази"]):
-            await message.reply("Рисую, подожди немного... 🎨")
-            try:
-                image_url = await generate_image(message.text)
-                await message.answer_photo(photo=image_url)
-            except Exception as e:
-                await message.reply(f"Ошибка при рисовании: {e}")
-        
-        # Обычный ответ на вопрос
-        else:
-            try:
-                answer = await ask_gpt(message.text)
-                await message.reply(answer)
-            except Exception as e:
-                await message.reply(f"Не смог ответить: {e}")
-
-async def main():
-    print(f"Бот {BOT_NAME} запущен!")
-    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
