@@ -5,7 +5,7 @@ from openai import AsyncOpenAI
 # --- НАСТРОЙКИ ---
 TELEGRAM_TOKEN = "8707608068:AAH2z1zsDcxhqz7CscUBZOd8HY3FX4VRrqQ"
 OPENAI_API_KEY = "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"
-BOT_NAME = "дружбан"  # Имя, на которое будет отзываться бот
+BOT_NAME = "Буся"  # Имя, на которое будет отзываться бот
 
 # Инициализация
 bot = Bot(token=TELEGRAM_TOKEN)
