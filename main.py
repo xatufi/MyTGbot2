@@ -1,97 +1,217 @@
 import logging
 import aiohttp
 import asyncio
+import time
+import aiosqlite
 from urllib.parse import quote
-from telegram import Update, InputMediaPhoto
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from gtts import gTTS
+from telegram import Update, InputFile
+from telegram.ext import (
+    ApplicationBuilder,
+    MessageHandler,
+    CommandHandler,
+    filters,
+    ContextTypes
+)
+from telegram.error import RetryAfter
 
-# ===== SETTINGS =====
-TELEGRAM_TOKEN = "8577693645:AAH6wzHj9pcgh-MGckVsmyDb4iXT0zWogJU"
-PIXAZO_API_KEY = "f071b54ed6584cebb9b361b3994edffd"
+# ==============================
+# CONFIG
+# ==============================
 
-POLLINATIONS_TEXT_URL = "https://text.pollinations.ai"
-PIXAZO_IMAGE_URL = "https://api.pixazo.ai/v1/text2image"
+TOKEN = "8577693645:AAH6wzHj9pcgh-MGckVsmyDb4iXT0zWogJU"
+TEXT_API = "https://text.pollinations.ai"
+IMAGE_API = "https://image.pollinations.ai/prompt/"
 
-# ===== LOGGING =====
+MAX_MEMORY = 20
+RATE_LIMIT_SECONDS = 5
+
+# ==============================
+# LOGGING
+# ==============================
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ===== CONTEXT MEMORY =====
-chat_memory = {}  # {chat_id: [messages...]}
+# ==============================
+# DATABASE
+# ==============================
 
-# ===== HELPERS =====
+async def init_db():
+    async with aiosqlite.connect("busya.db") as db:
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS memory (
+            chat_id INTEGER,
+            role TEXT,
+            message TEXT
+        )
+        """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            chat_id INTEGER PRIMARY KEY,
+            personality TEXT
+        )
+        """)
+        await db.commit()
 
-async def generate_text(prompt: str) -> str:
-    url = f"{POLLINATIONS_TEXT_URL}/{quote(prompt)}"
+# ==============================
+# MEMORY FUNCTIONS
+# ==============================
+
+async def save_message(chat_id, role, message):
+    async with aiosqlite.connect("busya.db") as db:
+        await db.execute(
+            "INSERT INTO memory VALUES (?, ?, ?)",
+            (chat_id, role, message)
+        )
+        await db.commit()
+
+async def get_memory(chat_id):
+    async with aiosqlite.connect("busya.db") as db:
+        async with db.execute(
+            "SELECT role, message FROM memory WHERE chat_id=? ORDER BY rowid DESC LIMIT ?",
+            (chat_id, MAX_MEMORY)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return list(reversed(rows))
+
+# ==============================
+# PERSONALITY
+# ==============================
+
+PERSONALITIES = {
+    "normal": "Ты Буся — умная, живая, дружелюбная девушка.",
+    "sarcastic": "Ты саркастичная, язвительная, но смешная Буся.",
+    "cute": "Ты милая, ласковая, эмпатичная Буся.",
+    "cold": "Ты холодная, логичная, немного высокомерная Буся."
+}
+
+async def set_personality(chat_id, personality):
+    async with aiosqlite.connect("busya.db") as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO settings VALUES (?, ?)",
+            (chat_id, personality)
+        )
+        await db.commit()
+
+async def get_personality(chat_id):
+    async with aiosqlite.connect("busya.db") as db:
+        async with db.execute(
+            "SELECT personality FROM settings WHERE chat_id=?",
+            (chat_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else "normal"
+
+# ==============================
+# STREAM TEXT
+# ==============================
+
+async def stream_text(prompt):
+    url = f"{TEXT_API}/{quote(prompt)}"
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, timeout=30) as resp:
-            if resp.status == 200:
-                return await resp.text()
-            return "Не удалось получить ответ 😢"
+        async with session.get(url) as resp:
+            text = await resp.text()
+            for i in range(0, len(text), 20):
+                yield text[i:i+20]
 
-async def generate_image(prompt: str) -> str:
-    headers = {"Authorization": f"Bearer {PIXAZO_API_KEY}"}
-    payload = {"prompt": prompt, "size": "1024x1024"}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(PIXAZO_IMAGE_URL, json=payload, headers=headers, timeout=60) as resp:
-            data = await resp.json()
-            if resp.status == 200 and "url" in data:
-                return data["url"]
-            return ""
+# ==============================
+# HANDLER
+# ==============================
 
-# ===== HANDLER =====
+last_request_time = {}
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if not text: return
-    if "буся" not in text.lower(): return
 
-    chat_id = update.message.chat_id
-    user_msg = text.replace("Буся", "").strip()
-
-    # save memory
-    mem = chat_memory.get(chat_id, [])
-    mem.append(f"User: {user_msg}")
-    if len(mem) > 10: mem.pop(0)
-    chat_memory[chat_id] = mem
-
-    # image request
-    if "нарисуй" in user_msg:
-        prompt = user_msg.replace("нарисуй", "").strip()
-        msg = await update.message.reply_text("Буся генерирует изображение... 🎨")
-        img_url = await generate_image(prompt)
-        if img_url:
-            await update.message.reply_photo(photo=img_url)
-        else:
-            await update.message.reply_text("Ошибка генерации 😿")
+    if not update.message or not update.message.text:
         return
 
-    # text stream + typing effect
-    prompt_text = "\n".join(mem + [f"Буся:"])
-    stream_msg = await update.message.reply_text("Буся печатает...")
+    chat_id = update.message.chat_id
+    user_id = update.message.from_user.id
+    text = update.message.text
 
-    response_text = await generate_text(prompt_text)
+    # ==================
+    # АНТИСПАМ
+    # ==================
+    now = time.time()
+    if user_id in last_request_time:
+        if now - last_request_time[user_id] < RATE_LIMIT_SECONDS:
+            return
+    last_request_time[user_id] = now
 
-    # typing effect
-    typed = ""
-    for ch in response_text:
-        typed += ch
-        try:
-            await stream_msg.edit_text(typed)
-        except:
-            pass
-        await asyncio.sleep(0.02)
+    # ==================
+    # IMAGE GENERATION
+    # ==================
+    if text.lower().startswith("нарисуй"):
+        prompt = text.replace("нарисуй", "").strip()
+        img_url = IMAGE_API + quote(prompt)
+        await update.message.reply_photo(img_url)
+        return
 
-    # save Buся response
-    mem.append(f"Буся: {response_text}")
-    chat_memory[chat_id] = mem
+    # ==================
+    # TEXT GENERATION
+    # ==================
+    personality_key = await get_personality(chat_id)
+    personality = PERSONALITIES.get(personality_key, PERSONALITIES["normal"])
 
-# ===== RUN =====
+    memory = await get_memory(chat_id)
+    context_text = "\n".join([f"{r}: {m}" for r, m in memory])
 
-def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    prompt = f"""
+{personality}
+Вот история диалога:
+{context_text}
+
+Пользователь: {text}
+Буся:
+"""
+
+    msg = await update.message.reply_text("Буся печатает...")
+
+    full_text = ""
+    last_edit = 0
+
+    async for chunk in stream_text(prompt):
+        full_text += chunk
+        if time.time() - last_edit > 1:
+            try:
+                await msg.edit_text(full_text[:4000])
+                last_edit = time.time()
+            except RetryAfter as e:
+                await asyncio.sleep(e.retry_after)
+
+    await msg.edit_text(full_text[:4000])
+
+    await save_message(chat_id, "User", text)
+    await save_message(chat_id, "Буся", full_text)
+
+# ==============================
+# COMMANDS
+# ==============================
+
+async def personality_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        p = context.args[0]
+        if p in PERSONALITIES:
+            await set_personality(update.message.chat_id, p)
+            await update.message.reply_text(f"Личность изменена на {p}")
+        else:
+            await update.message.reply_text("Доступно: normal, sarcastic, cute, cold")
+
+# ==============================
+# MAIN
+# ==============================
+
+async def main():
+    await init_db()
+
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("personality", personality_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    logger.info("Буся PRO запущена 🚀")
     app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
