@@ -4,8 +4,7 @@ import asyncio
 import time
 import aiosqlite
 from urllib.parse import quote
-from gtts import gTTS
-from telegram import Update, InputFile
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
@@ -55,7 +54,7 @@ async def init_db():
         await db.commit()
 
 # ==============================
-# MEMORY FUNCTIONS
+# MEMORY
 # ==============================
 
 async def save_message(chat_id, role, message):
@@ -104,49 +103,57 @@ async def get_personality(chat_id):
             return row[0] if row else "normal"
 
 # ==============================
-# STREAM TEXT
+# TEXT GENERATION (NO STREAM)
 # ==============================
 
-async def stream_text(prompt):
+async def generate_text(prompt):
     url = f"{TEXT_API}/{quote(prompt)}"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
-            text = await resp.text()
-            for i in range(0, len(text), 20):
-                yield text[i:i+20]
+            return await resp.text()
 
 # ==============================
-# HANDLER
+# GLOBAL RATE LIMIT
 # ==============================
 
 last_request_time = {}
+
+def is_rate_limited(user_id):
+    now = time.time()
+    if user_id in last_request_time:
+        if now - last_request_time[user_id] < RATE_LIMIT_SECONDS:
+            return True
+    last_request_time[user_id] = now
+    return False
+
+# ==============================
+# MESSAGE HANDLER
+# ==============================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    text = update.message.text
-    # ==================
-    # АНТИСПАМ
-    # ==================
-    now = time.time()
-    if user_id in last_request_time:
-        if now - last_request_time[user_id] < RATE_LIMIT_SECONDS:
-            return
-    last_request_time[user_id] = now
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
 
-    # ==================
-    # IMAGE GENERATION
-    # ==================
+    # ========= АНТИСПАМ =========
+    if is_rate_limited(user_id):
+        return
+
+    # ========= IMAGE =========
     if text.lower().startswith("нарисуй"):
         prompt = text.replace("нарисуй", "").strip()
         img_url = IMAGE_API + quote(prompt)
-        await update.message.reply_photo(img_url)
+        try:
+            await update.message.reply_photo(img_url)
+        except RetryAfter as e:
+            await asyncio.sleep(e.retry_after)
+            await update.message.reply_photo(img_url)
         return
 
-    # ==================
-    # TEXT GENERATION
-    # ==================
+    # ========= TEXT =========
     personality_key = await get_personality(chat_id)
     personality = PERSONALITIES.get(personality_key, PERSONALITIES["normal"])
 
@@ -162,34 +169,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Буся:
 """
 
-    msg = await update.message.reply_text("Буся печатает...")
+    try:
+        await update.message.chat.send_action("typing")
+    except:
+        pass
 
-    full_text = ""
-    last_edit = 0
+    try:
+        response = await generate_text(prompt)
+        response = response[:4000]
 
-    async for chunk in stream_text(prompt):
-        full_text += chunk
-        if time.time() - last_edit > 1:
-            try:
-                await msg.edit_text(full_text[:4000])
-                last_edit = time.time()
-            except RetryAfter as e:
-                await asyncio.sleep(e.retry_after)
+        await update.message.reply_text(response)
 
-    await msg.edit_text(full_text[:4000])
+        await save_message(chat_id, "User", text)
+        await save_message(chat_id, "Буся", response)
 
-    await save_message(chat_id, "User", text)
-    await save_message(chat_id, "Буся", full_text)
+    except RetryAfter as e:
+        await asyncio.sleep(e.retry_after)
+        await update.message.reply_text("Слишком много запросов. Попробуй через пару секунд.")
+
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+        await update.message.reply_text("Произошла ошибка 😔")
 
 # ==============================
 # COMMANDS
 # ==============================
 
 async def personality_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+
     if context.args:
         p = context.args[0]
         if p in PERSONALITIES:
-            await set_personality(update.message.chat_id, p)
+            await set_personality(chat_id, p)
             await update.message.reply_text(f"Личность изменена на {p}")
         else:
             await update.message.reply_text("Доступно: normal, sarcastic, cute, cold")
@@ -207,7 +219,7 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Буся PRO запущена 🚀")
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
