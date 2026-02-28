@@ -22,8 +22,8 @@ TOKEN = "8577693645:AAH6wzHj9pcgh-MGckVsmyDb4iXT0zWogJU"
 TEXT_API = "https://text.pollinations.ai"
 IMAGE_API = "https://image.pollinations.ai/prompt/"
 
-MAX_MEMORY = 20
-RATE_LIMIT_SECONDS = 5
+MAX_MEMORY = 15
+RATE_LIMIT_SECONDS = 4
 
 # ==============================
 # LOGGING
@@ -79,10 +79,10 @@ async def get_memory(chat_id):
 # ==============================
 
 PERSONALITIES = {
-    "normal": "Ты Буся — умная, живая, дружелюбная девушка.",
-    "sarcastic": "Ты саркастичная, язвительная, но смешная Буся.",
-    "cute": "Ты милая, ласковая, эмпатичная Буся.",
-    "cold": "Ты холодная, логичная, немного высокомерная Буся."
+    "normal": "Ты Буся — умная, дружелюбная девушка.",
+    "sarcastic": "Ты саркастичная и язвительная, но смешная Буся.",
+    "cute": "Ты милая, ласковая и заботливая Буся.",
+    "cold": "Ты холодная, логичная и немного высокомерная Буся."
 }
 
 async def set_personality(chat_id, personality):
@@ -103,17 +103,21 @@ async def get_personality(chat_id):
             return row[0] if row else "normal"
 
 # ==============================
-# TEXT GENERATION (NO STREAM)
+# TEXT GENERATION
 # ==============================
 
 async def generate_text(prompt):
     url = f"{TEXT_API}/{quote(prompt)}"
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=60)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url) as resp:
+            if resp.status != 200:
+                return "Ошибка генерации текста."
             return await resp.text()
 
 # ==============================
-# GLOBAL RATE LIMIT
+# RATE LIMIT
 # ==============================
 
 last_request_time = {}
@@ -138,22 +142,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    # ========= АНТИСПАМ =========
+    # Антиспам
     if is_rate_limited(user_id):
         return
 
-    # ========= IMAGE =========
+    # Генерация изображения
     if text.lower().startswith("нарисуй"):
         prompt = text.replace("нарисуй", "").strip()
         img_url = IMAGE_API + quote(prompt)
+
         try:
             await update.message.reply_photo(img_url)
-        except RetryAfter as e:
-            await asyncio.sleep(e.retry_after)
-            await update.message.reply_photo(img_url)
+        except Exception:
+            await update.message.reply_text("Ошибка генерации изображения.")
         return
 
-    # ========= TEXT =========
+    # Генерация текста
     personality_key = await get_personality(chat_id)
     personality = PERSONALITIES.get(personality_key, PERSONALITIES["normal"])
 
@@ -162,7 +166,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     prompt = f"""
 {personality}
-Вот история диалога:
+
+История диалога:
 {context_text}
 
 Пользователь: {text}
@@ -185,10 +190,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except RetryAfter as e:
         await asyncio.sleep(e.retry_after)
-        await update.message.reply_text("Слишком много запросов. Попробуй через пару секунд.")
+        await update.message.reply_text("Слишком много запросов, подожди немного.")
 
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(e)
         await update.message.reply_text("Произошла ошибка 😔")
 
 # ==============================
@@ -218,7 +223,7 @@ async def main():
     app.add_handler(CommandHandler("personality", personality_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("Буся PRO запущена 🚀")
+    logger.info("Буся запущена 🚀")
     await app.run_polling()
 
 if __name__ == "__main__":
