@@ -122,14 +122,10 @@ async def stream_text(prompt):
 last_request_time = {}
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if not update.message or not update.message.text:
         return
 
-    chat_id = update.message.chat_id
-    user_id = update.message.from_user.id
     text = update.message.text
-
     # ==================
     # АНТИСПАМ
     # ==================
