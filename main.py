@@ -4,7 +4,12 @@ import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
+# Если вы запускаете в Jupyter / Colab, раскомментируйте:
+# import nest_asyncio
+# nest_asyncio.apply()
+
 TOKEN = "8577693645:AAH6wzHj9pcgh-MGckVsmyDb4iXT0zWogJU"
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -12,17 +17,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get("https://api.quotable.io/random") as resp:
-            data = await resp.json()
-            text = data.get("content", "Привет! Я Буся, но API недоступен 😅")
-            await update.message.reply_text(text)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://api.quotable.io/random") as resp:
+                data = await resp.json()
+                text = data.get("content", "Привет! Я Буся, но API недоступен 😅")
+    except Exception as e:
+        logger.error(f"Ошибка при запросе к API: {e}")
+        text = "Привет! Я Буся, но API недоступен 😅"
 
-async def main():
+    await update.message.reply_text(text)
+
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
+
+    # Добавляем обработчик всех текстовых сообщений
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    logger.info("Буся без токена запущена 🚀")
-    await app.run_polling()
+
+    logger.info("Буся запущена 🚀")
+
+    # Запуск бота
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
