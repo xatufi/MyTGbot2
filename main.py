@@ -3,7 +3,7 @@ from aiogram import Bot, Dispatcher, types, F
 from openai import AsyncOpenAI
 
 # 1. ВСТАВЬ СВОИ ДАННЫЕ ТУТ:
-BOT_TOKEN = "t8577693645:AAH6wzHj9pcgh-MGckVsmyDb4iXT0zWogJU"
+BOT_TOKEN = "8577693645:AAH6wzHj9pcgh-MGckVsmyDb4iXT0zWogJU"
 AI_API_KEY = "PiIFdqwXHJdgh5CAfOJeYbrePb1M9bBW"
 
 # Настройка клиента ИИ (пример для Mistral, для DeepSeek смени base_url)
