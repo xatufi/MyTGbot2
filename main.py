@@ -1,42 +1,44 @@
-import logging
-import aiohttp
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+import asyncio
+from aiogram import Bot, Dispatcher, types, F
+from g4f.client import Client
 
-# Токен бота
+# Токен получи у @BotFather
 TOKEN = "8577693645:AAH6wzHj9pcgh-MGckVsmyDb4iXT0zWogJU"
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
+client = Client()
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатываем все текстовые сообщения"""
-    if not update.message or not update.message.text:
+async def get_ai_answer(prompt):
+    """Запрос к бесплатному ИИ"""
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o", # Можно менять на gpt-3.5-turbo
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return "Ой, что-то в мозгах заклинило... Попробуй еще раз!"
+
+@dp.message(F.text.lower().contains("буся"))
+async def busya_handler(message: types.Message):
+    # Убираем слово "буся" из запроса, чтобы ИИ отвечал чище
+    user_query = message.text.lower().replace("буся", "").strip()
+    
+    if not user_query:
+        await message.reply("Гав? Я тут! Что нужно?")
         return
 
-    try:
-        # Запрос случайной цитаты
-        async with aiohttp.ClientSession() as session:
-            async with session.get("https://api.quotable.io/random") as resp:
-                data = await resp.json()
-                text = data.get("content", "Привет! Я Буся, но API недоступен 😅")
-    except Exception as e:
-        logger.error(f"Ошибка при запросе к API: {e}")
-        text = "Привет! Я Буся, но API недоступен 😅"
+    # Показываем, что Буся "печатает"
+    await bot.send_chat_action(message.chat.id, "typing")
+    
+    answer = await get_ai_answer(user_query)
+    await message.reply(answer)
 
-    await update.message.reply_text(text)
-
-def main():
-    # Создаём приложение бота
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    # Добавляем обработчик всех текстовых сообщений (кроме команд)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    logger.info("Буся запущена 🚀")
-
-    # Запуск бота (сам управляет asyncio)
-    app.run_polling()
+async def main():
+    print("Буся запущена и готова к работе!")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
+    
