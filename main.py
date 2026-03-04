@@ -1,42 +1,51 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types, F
-from g4f.client import Client
+from openai import AsyncOpenAI
 
-# Токен получи у @BotFather
-TOKEN = "8577693645:AAH6wzHj9pcgh-MGckVsmyDb4iXT0zWogJU"
+# 1. ВСТАВЬ СВОИ ДАННЫЕ ТУТ:
+BOT_TOKEN = "t8577693645:AAH6wzHj9pcgh-MGckVsmyDb4iXT0zWogJU"
+AI_API_KEY = "PiIFdqwXHJdgh5CAfOJeYbrePb1M9bBW"
 
-bot = Bot(token=TOKEN)
+# Настройка клиента ИИ (пример для Mistral, для DeepSeek смени base_url)
+client = AsyncOpenAI(
+    api_key=AI_API_KEY,
+    base_url="https://api.mistral.ai" 
+)
+
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-client = Client()
 
-async def get_ai_answer(prompt):
-    """Запрос к бесплатному ИИ"""
+async def get_ai_response(text):
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o", # Можно менять на gpt-3.5-turbo
-            messages=[{"role": "user", "content": prompt}]
+        response = await client.chat.completions.create(
+            model="mistral-tiny", # Или "deepseek-chat"
+            messages=[
+                {"role": "system", "content": "Ты — веселый бот по имени Буся. Помогаешь решать задачи и просто общаешься."},
+                {"role": "user", "content": text}
+            ]
         )
         return response.choices[0].message.content
     except Exception as e:
-        return "Ой, что-то в мозгах заклинило... Попробуй еще раз!"
+        print(f"Ошибка ИИ: {e}")
+        return "Буся немного устала... Попробуй спросить чуть позже! 🐾"
 
 @dp.message(F.text.lower().contains("буся"))
-async def busya_handler(message: types.Message):
-    # Убираем слово "буся" из запроса, чтобы ИИ отвечал чище
-    user_query = message.text.lower().replace("буся", "").strip()
+async def handle_busya(message: types.Message):
+    # Очищаем запрос от имени "буся"
+    user_prompt = message.text.lower().replace("буся", "").strip()
     
-    if not user_query:
-        await message.reply("Гав? Я тут! Что нужно?")
+    if not user_prompt:
+        await message.reply("Гав! Я тут. Что нужно решить или обсудить?")
         return
 
-    # Показываем, что Буся "печатает"
+    # Эффект печатания
     await bot.send_chat_action(message.chat.id, "typing")
     
-    answer = await get_ai_answer(user_query)
+    answer = await get_ai_response(user_prompt)
     await message.reply(answer)
 
 async def main():
-    print("Буся запущена и готова к работе!")
+    print("Буся запущена!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
