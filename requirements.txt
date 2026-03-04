@@ -1,4 +1,2 @@
 aiogram
-g4f
-curl_cffi
-python-telegram-bot
+openai
