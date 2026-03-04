@@ -1,51 +1,42 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types, F
-from openai import AsyncOpenAI
+from duckduckgo_search import DDGS
 
-# 1. ВСТАВЬ СВОИ ДАННЫЕ ТУТ:
-BOT_TOKEN = "8577693645:AAH6wzHj9pcgh-MGckVsmyDb4iXT0zWogJU"
-AI_API_KEY = "PiIFdqwXHJdgh5CAfOJeYbrePb1M9bBW"
+# Вставь свой токен от @BotFather
+TOKEN = "8577693645:AAH6wzHj9pcgh-MGckVsmyDb4iXT0zWogJU"
 
-# Настройка клиента ИИ (пример для Mistral, для DeepSeek смени base_url)
-client = AsyncOpenAI(
-    api_key=AI_API_KEY,
-    base_url="https://api.mistral.ai" 
-)
-
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-async def get_ai_response(text):
+def get_ai_answer(prompt):
+    """Прямой запрос к ИИ через DuckDuckGo (без ключей)"""
     try:
-        response = await client.chat.completions.create(
-            model="mistral-tiny", # Или "deepseek-chat"
-            messages=[
-                {"role": "system", "content": "Ты — веселый бот по имени Буся. Помогаешь решать задачи и просто общаешься."},
-                {"role": "user", "content": text}
-            ]
-        )
-        return response.choices[0].message.content
+        with DDGS() as ddgs:
+            # Используем модель gpt-4o-mini (бесплатно и стабильно)
+            results = ddgs.chat(f"Ты бот Буся. Отвечай кратко и дружелюбно. Запрос: {prompt}", model='gpt-4o-mini')
+            return results
     except Exception as e:
-        print(f"Ошибка ИИ: {e}")
-        return "Буся немного устала... Попробуй спросить чуть позже! 🐾"
+        print(f"Ошибка: {e}")
+        return "Буся задумалась о косточке... Попробуй еще раз! 🦴"
 
 @dp.message(F.text.lower().contains("буся"))
-async def handle_busya(message: types.Message):
-    # Очищаем запрос от имени "буся"
-    user_prompt = message.text.lower().replace("буся", "").strip()
+async def busya_handler(message: types.Message):
+    user_query = message.text.lower().replace("буся", "").strip()
     
-    if not user_prompt:
-        await message.reply("Гав! Я тут. Что нужно решить или обсудить?")
+    if not user_query:
+        await message.reply("Гав! Я тут. Спроси что-нибудь!")
         return
 
-    # Эффект печатания
     await bot.send_chat_action(message.chat.id, "typing")
     
-    answer = await get_ai_response(user_prompt)
+    # Запускаем ИИ в отдельном потоке, чтобы бот не тормозил
+    loop = asyncio.get_event_loop()
+    answer = await loop.run_in_executor(None, get_ai_answer, user_query)
+    
     await message.reply(answer)
 
 async def main():
-    print("Буся запущена!")
+    print("Буся вышла на охоту!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
